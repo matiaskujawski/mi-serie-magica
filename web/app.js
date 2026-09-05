@@ -185,6 +185,12 @@ function leerEntrada() {
 // --- Progreso del render: polling a /api/render/:id/status ---
 let currentJobId = null;
 let pollTimer = null;
+let fallosSeguidos = 0;
+// Tolerancia a fallos transitorios del ping (un 502 pasajero, o el servidor
+// gratuito de Render reiniciándose solo): con un poll cada 1.5s, esto le da
+// hasta ~45s para volver antes de darlo por perdido. Un solo fallo suelto
+// NO debe mostrarle un error al usuario ni tirar el trabajo por la borda.
+const MAX_FALLOS_SEGUIDOS = 30;
 
 function mostrarProgreso(pct) {
   progressWrap.hidden = false;
@@ -205,40 +211,57 @@ function detenerPolling() {
 
 function terminarConError(mensaje) {
   detenerPolling();
+  fallosSeguidos = 0;
   statusEl.textContent = "Ups, algo falló: " + mensaje;
   btnReintentar.hidden = false;
   btnGenerar.disabled = false;
 }
 
 async function consultarProgreso(jobId) {
+  let data;
   try {
     const res = await fetch(`${API}/api/render/${jobId}/status`);
-    const data = await res.json();
-    if (!data.ok) return terminarConError(data.error);
-
-    const { stepsDone = 0, totalSteps = 1, message } = data.progress || {};
-    const pct = Math.round((stepsDone / totalSteps) * 100);
-
-    if (data.status === "running") {
-      mostrarProgreso(pct);
-      statusEl.textContent = `${message || "Generando tu capítulo..."} (${pct}%)`;
-    } else if (data.status === "done") {
-      detenerPolling();
-      ocultarProgreso();
-      btnReintentar.hidden = true;
-      btnGenerar.disabled = false;
-      statusEl.textContent = "¡Listo! Tu capítulo se agregó a Mi Serie, abajo. 🎉";
-      cargarEpisodios();
-    } else if (data.status === "error") {
-      terminarConError(data.error);
-    }
+    data = await res.json();
   } catch (err) {
-    terminarConError(err.message);
+    // Fallo de red/parseo puntual (ej: un 502 pasajero, o el servidor
+    // reiniciándose): reintentamos en el próximo tick en vez de tirar todo
+    // por la borda — el trabajo puede seguir corriendo bien del otro lado.
+    fallosSeguidos += 1;
+    if (fallosSeguidos >= MAX_FALLOS_SEGUIDOS) {
+      return terminarConError("perdimos la conexión con el servidor por mucho tiempo (" + err.message + ")");
+    }
+    statusEl.textContent = "Reconectando con el servidor...";
+    return;
+  }
+
+  if (!data.ok) {
+    // Acá sí es un error real que el servidor nos devolvió explícitamente
+    // (ej: "no encontramos ese trabajo"), no un problema de conexión.
+    return terminarConError(data.error);
+  }
+  fallosSeguidos = 0;
+
+  const { stepsDone = 0, totalSteps = 1, message } = data.progress || {};
+  const pct = Math.round((stepsDone / totalSteps) * 100);
+
+  if (data.status === "running") {
+    mostrarProgreso(pct);
+    statusEl.textContent = `${message || "Generando tu capítulo..."} (${pct}%)`;
+  } else if (data.status === "done") {
+    detenerPolling();
+    ocultarProgreso();
+    btnReintentar.hidden = true;
+    btnGenerar.disabled = false;
+    statusEl.textContent = "¡Listo! Tu capítulo se agregó a Mi Serie, abajo. 🎉";
+    cargarEpisodios();
+  } else if (data.status === "error") {
+    terminarConError(data.error);
   }
 }
 
 function iniciarPolling(jobId) {
   currentJobId = jobId;
+  fallosSeguidos = 0;
   btnReintentar.hidden = true;
   mostrarProgreso(2);
   consultarProgreso(jobId);
