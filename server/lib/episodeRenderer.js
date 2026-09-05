@@ -10,7 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
 
-const { generateSceneImage } = require("./imageProvider");
+const { generateSceneImage, ensureCharacterReferences } = require("./imageProvider");
 const { synthesizeScene } = require("./ttsProvider");
 const { renderScene, renderHookScene, renderOutroCard, concatScenes } = require("./videoAssembler");
 
@@ -37,16 +37,19 @@ function pickHookScene(episode) {
   return pool[Math.min(pool.length - 1, Math.floor(pool.length / 2))];
 }
 
-async function renderEpisode(episode, { outDir, imageProvider = "placeholder", ttsProvider = "placeholder" }) {
+async function renderEpisode(episode, { outDir, imageProvider = "placeholder", ttsProvider = "placeholder", personajes = [] }) {
   fs.mkdirSync(outDir, { recursive: true });
 
   const sceneFiles = [];
   const assetsByScene = {};
   const log = [];
 
+  log.push("Preparando referencias visuales de los personajes...");
+  const characterRefs = await ensureCharacterReferences(personajes, imageProvider);
+
   for (const scene of episode.escenas) {
     log.push(`Escena ${scene.numero}: generando imagen...`);
-    const imagePath = await generateSceneImage(scene, outDir, imageProvider);
+    const imagePath = await generateSceneImage(scene, outDir, imageProvider, characterRefs);
 
     log.push(`Escena ${scene.numero}: generando audio...`);
     const audioPath = await synthesizeScene(scene, outDir, ttsProvider);

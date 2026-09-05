@@ -212,7 +212,7 @@ btnGenerar.addEventListener("click", async () => {
     const resRender = await fetch(`${API}/api/render`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ episodio }),
+      body: JSON.stringify({ episodio, personajes }),
     });
     const dataRender = await resRender.json();
     if (!dataRender.ok) throw new Error(dataRender.error);

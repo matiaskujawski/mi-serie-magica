@@ -5,20 +5,26 @@
  * escena usando Python/Pillow (scripts/generate_placeholder_image.py).
  * Es gratis y offline, y sirve para validar el pipeline completo.
  *
- * En producción, reemplazar por una llamada real a un proveedor con
- * "referencia de personaje" para mantener consistencia visual entre
- * escenas y episodios, por ejemplo:
- *   - fal.ai (modelos Flux, con soporte de imagen de referencia)
- *   - getimg.ai "Elements" (subís 1-20 fotos del personaje una vez y
- *     lo invocás como @NombrePersonaje en cualquier prompt)
- *   - OpenAI Images con imagen de referencia
- * La idea es subir una vez las fotos/reference art de cada personaje
- * (sea inventado o basado en una foto real que mandó la familia) y
- * reusar esa referencia en cada escena, en vez de generar personajes
- * nuevos cada vez (eso rompe la consistencia Y sale más caro).
+ * Modo "fal": usa fal.ai (modelos Flux) con referencia de personaje, para
+ * mantener consistencia visual entre escenas y episodios:
+ *   1. Una sola vez por episodio (`ensureCharacterReferences`), por cada
+ *      personaje: si la familia subió una foto, esa foto ES la referencia;
+ *      si no, se genera UNA imagen de referencia a partir de su
+ *      descripción (fal-ai/flux/schnell, texto -> imagen). Ese costo se
+ *      paga una sola vez por personaje, no por escena.
+ *   2. Por cada escena (`generateSceneImage`), se usa fal-ai/flux-pro/kontext
+ *      (imagen -> imagen) para "editar" la referencia del personaje
+ *      principal de la escena hacia el lugar/situación que describe
+ *      `descripcion_visual`, manteniendo su aspecto. Si la escena tiene
+ *      más personajes, se los menciona en el prompt de texto (Kontext solo
+ *      acepta una imagen de referencia por llamada).
+ * Requiere FAL_KEY. Si un personaje tiene foto propia, esa foto tiene que
+ * ser una URL pública (por eso PUBLIC_BASE_URL: fal.ai necesita poder
+ * descargarla, no le sirve una ruta local).
  * Ver docs/arquitectura-tecnica.md, sección "Generación de imágenes".
  */
 const { execFile } = require("child_process");
+const fs = require("fs");
 const path = require("path");
 
 const PLACEHOLDER_SCRIPT = path.join(__dirname, "..", "..", "scripts", "generate_placeholder_image.py");
@@ -45,9 +51,111 @@ async function generateScenePlaceholder(scene, outDir) {
   return outPath;
 }
 
-async function generateSceneImage(scene, outDir, provider = "placeholder") {
+function absoluteUrl(maybeRelativeUrl) {
+  if (/^https?:\/\//i.test(maybeRelativeUrl)) return maybeRelativeUrl;
+  const base = process.env.PUBLIC_BASE_URL;
+  if (!base) {
+    throw new Error(
+      `La foto de referencia "${maybeRelativeUrl}" es una ruta relativa y falta PUBLIC_BASE_URL ` +
+        `en el entorno para convertirla en una URL pública que fal.ai pueda descargar.`
+    );
+  }
+  return base.replace(/\/$/, "") + maybeRelativeUrl;
+}
+
+async function downloadToFile(url, outPath) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`No se pudo descargar la imagen generada (${res.status}): ${url}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  fs.writeFileSync(outPath, buffer);
+  return outPath;
+}
+
+async function falRequest(model, body) {
+  const apiKey = process.env.FAL_KEY;
+  if (!apiKey) throw new Error("Falta FAL_KEY en el entorno para usar IMAGE_PROVIDER=fal.");
+  const res = await fetch(`https://fal.run/${model}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Key ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`fal.ai (${model}) respondió ${res.status}: ${errBody}`);
+  }
+  return res.json();
+}
+
+// Se llama UNA VEZ por episodio, antes de generar las escenas. Devuelve
+// { nombrePersonaje: urlDeReferencia }.
+async function ensureCharacterReferences(personajes, provider) {
+  const refs = {};
+  if (provider !== "fal" || !personajes) return refs;
+
+  for (const p of personajes) {
+    if (p.foto_referencia_url) {
+      refs[p.nombre] = absoluteUrl(p.foto_referencia_url);
+      continue;
+    }
+    // Sin foto: generamos UNA imagen de referencia a partir de la
+    // descripción, para reusarla en todas las escenas de este personaje.
+    const prompt =
+      `Retrato de personaje de cuento infantil ilustrado, fondo neutro, cuerpo entero: ` +
+      `${p.nombre} — ${p.descripcion || "sin descripción"}. Estilo cálido, colores vivos, apto para chicos.`;
+    const data = await falRequest("fal-ai/flux/schnell", {
+      prompt,
+      image_size: "square_hd",
+      num_images: 1,
+    });
+    const url = data && data.images && data.images[0] && data.images[0].url;
+    if (!url) throw new Error(`fal.ai no devolvió una imagen de referencia para "${p.nombre}".`);
+    refs[p.nombre] = url;
+  }
+  return refs;
+}
+
+async function generateSceneImageFal(scene, outDir, characterRefs) {
+  const nombresEnEscena = scene.personajes_en_escena || [];
+  const principal = nombresEnEscena.find((n) => characterRefs[n]);
+  const outPath = path.join(outDir, `scene-${scene.numero}.png`);
+
+  if (!principal) {
+    // Ningún personaje de la escena tiene referencia todavía (raro, pero
+    // por las dudas): generamos directo desde texto.
+    const data = await falRequest("fal-ai/flux/schnell", {
+      prompt: scene.descripcion_visual,
+      image_size: "landscape_16_9",
+      num_images: 1,
+    });
+    const url = data.images && data.images[0] && data.images[0].url;
+    if (!url) throw new Error(`fal.ai no devolvió imagen para la escena ${scene.numero}.`);
+    return downloadToFile(url, outPath);
+  }
+
+  const otros = nombresEnEscena.filter((n) => n !== principal);
+  const prompt =
+    `${scene.descripcion_visual}` +
+    (otros.length ? ` También aparecen en la escena: ${otros.join(", ")}.` : "") +
+    ` Mantené el aspecto físico del personaje de la imagen de referencia sin cambiarlo.`;
+
+  const data = await falRequest("fal-ai/flux-pro/kontext", {
+    prompt,
+    image_url: characterRefs[principal],
+  });
+  const url = data.images && data.images[0] && data.images[0].url;
+  if (!url) throw new Error(`fal.ai no devolvió imagen para la escena ${scene.numero}.`);
+  return downloadToFile(url, outPath);
+}
+
+async function generateSceneImage(scene, outDir, provider = "placeholder", characterRefs = {}) {
   if (provider === "placeholder") {
     return generateScenePlaceholder(scene, outDir);
+  }
+  if (provider === "fal") {
+    return generateSceneImageFal(scene, outDir, characterRefs);
   }
   throw new Error(
     `Proveedor de imágenes "${provider}" no implementado todavía en este prototipo. ` +
@@ -55,4 +163,4 @@ async function generateSceneImage(scene, outDir, provider = "placeholder") {
   );
 }
 
-module.exports = { generateSceneImage };
+module.exports = { generateSceneImage, ensureCharacterReferences };

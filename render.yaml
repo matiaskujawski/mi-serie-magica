@@ -10,8 +10,16 @@ services:
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false # lo cargás vos a mano en el dashboard (Environment), nunca en el repo
+      - key: FAL_KEY
+        sync: false # ídem — clave de fal.ai para arte real de personajes
+      - key: OPENAI_API_KEY
+        sync: false # ídem — clave de OpenAI para voz real en español
       - key: IMAGE_PROVIDER
-        value: placeholder
+        value: fal
       - key: TTS_PROVIDER
-        value: placeholder
+        value: openai
+      - key: TTS_VOICE
+        value: coral
+      - key: PUBLIC_BASE_URL
+        sync: false # tu URL real de Render, ej: https://mi-serie-magica.onrender.com
     healthCheckPath: /web/index.html

@@ -72,6 +72,7 @@ app.post("/api/guion", async (req, res) => {
 app.post("/api/render", async (req, res) => {
   try {
     const episodio = req.body.episodio;
+    const personajes = req.body.personajes || [];
     if (!episodio || !episodio.escenas) {
       return res.status(400).json({ ok: false, error: "Falta 'episodio' con su lista de 'escenas'." });
     }
@@ -81,6 +82,7 @@ app.post("/api/render", async (req, res) => {
       outDir,
       imageProvider: process.env.IMAGE_PROVIDER || "placeholder",
       ttsProvider: process.env.TTS_PROVIDER || "placeholder",
+      personajes,
     });
 
     const rows = loadDb();

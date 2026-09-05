@@ -11,11 +11,13 @@ ensamblado final en video — probado y verificado. Además, por cada
 episodio se genera automáticamente un **clip vertical corto ("gancho")**
 para TikTok/Reels/Shorts, reusando la misma imagen y audio de una escena
 (costo extra ≈ cero), pensado para atraer gente al sitio a ver el
-capítulo completo. Lo único que usa proveedores "placeholder" (gratis,
-offline) es la parte creativa final (arte real de los personajes y voces en
-español), que se resuelve conectando una API paga cuando decidan cuál usar
-— la arquitectura ya está lista para ese cambio (ver "Cómo pasar a
-producción" más abajo).
+capítulo completo.
+
+Ya está integrado el modo de **generación real** (arte de personajes con
+fal.ai/Flux y voz en español con OpenAI `gpt-4o-mini-tts`) — ver "Cómo
+activar la generación real" más abajo. Por defecto el proyecto sigue
+corriendo en modo "placeholder" (gratis, offline) hasta que se configuren
+esas claves, para poder probar el pipeline sin gastar nada.
 
 El formulario (`web/index.html` + `web/app.js`) ya es la primera versión
 real de cara a la familia, no solo un panel de pruebas: se pueden agregar
@@ -45,13 +47,10 @@ que se invente solo, elegir edad/duración con un par de clicks, y generar
 el capítulo — que después puede ver online o descargar, junto con su clip
 corto para redes.
 
-⚠️ **Esta versión del formulario todavía no la corrimos en vivo dentro de
-esta conversación**: el entorno donde arma el prototipo no tiene acceso a
-la registry de npm (una restricción del entorno, no del código), así que
-no pudimos instalar `express`/`multer`/etc. para hacer el click-through
-nosotros mismos. El código está revisado y sin errores de sintaxis, pero
-recomendamos que la primera corrida real la hagas vos con `npm install &&
-npm start` (o probarlo juntos si conectás tu computadora a la sesión).
+El proyecto ya está desplegado en vivo en Render (Docker), así que también
+se puede probar directamente en la URL pública sin instalar nada
+localmente — ver "Cómo activar la generación real" más abajo para pasar de
+placeholders a arte/voz reales ahí.
 
 ### Probar el pipeline de render sin necesitar ninguna API key
 
@@ -100,33 +99,48 @@ educativos de bajo presupuesto: se percibe "animado" y profesional para el
 público objetivo, y el costo real es básicamente el de generar **una
 imagen y unos segundos de voz por escena**, no video por segundo.
 
-## Cómo pasar a producción (reemplazar los placeholders)
+## Cómo activar la generación real (salir del modo "placeholder")
 
-Hay 2 puntos de extensión, ambos ya aislados en su propio archivo:
+El código ya tiene los dos proveedores reales integrados
+(`server/lib/imageProvider.js` y `server/lib/ttsProvider.js`). Para
+activarlos alcanza con variables de entorno, sin tocar código:
 
-1. **Imágenes** (`server/lib/imageProvider.js`): agregar un proveedor real
-   con soporte de "referencia de personaje" (para que Toby se vea igual en
-   todas las escenas), por ejemplo fal.ai (Flux), getimg.ai (Elements) u
-   OpenAI Images. Se sube una vez el arte/foto de referencia de cada
-   personaje y se reusa en cada escena.
-2. **Voz** (`server/lib/ttsProvider.js`): agregar un proveedor con buena
-   voz en español, por ejemplo OpenAI `gpt-4o-mini-tts` (el más barato,
-   ~US$0.015/min), Google Cloud TTS o Azure TTS Neural (similar precio), o
-   ElevenLabs si se prioriza expresividad por sobre costo (~US$0.03-0.05/min).
+1. **Imágenes reales, con el personaje consistente entre escenas**
+   (fal.ai, modelos Flux): conseguir una clave en fal.ai/dashboard/keys y
+   setear `FAL_KEY` e `IMAGE_PROVIDER=fal`. Por cada personaje, si la
+   familia subió una foto se usa esa foto como referencia; si no, se genera
+   una única imagen de referencia a partir de su descripción, y esa misma
+   referencia se reusa (editada por escena) en todo el capítulo — el costo
+   de "crear" al personaje se paga una sola vez, no por escena. También
+   hace falta `PUBLIC_BASE_URL` (la URL pública del sitio, ej.
+   `https://mi-serie-magica.onrender.com`) para que fal.ai pueda descargar
+   las fotos que suben los usuarios.
+2. **Voz real en español** (OpenAI `gpt-4o-mini-tts`, ~US$0.015/min):
+   conseguir una clave en platform.openai.com/api-keys y setear
+   `OPENAI_API_KEY` y `TTS_PROVIDER=openai`. La voz se elige con
+   `TTS_VOICE` (por defecto `coral`, cálida).
+
+Ver `.env.example` para la lista completa, y `render.yaml` para cómo
+quedan seteadas estas variables en Render (las claves secretas se cargan a
+mano en el dashboard de Render, nunca en el repo).
 
 El ensamblado de video (`videoAssembler.js`) y el resto del pipeline no
-necesitan cambios: reciben una imagen y un audio por escena sin importar de
-dónde salieron.
+necesitan ningún cambio: reciben una imagen y un audio por escena sin
+importar de dónde salieron.
 
 ## Qué falta para que esto sea un producto (fuera del alcance de este prototipo)
 
 - Autenticación de familias, cobro/suscripción, moderación de contenido
   subido (fotos de chicos/mascotas).
 - Cola de trabajos asíncrona para el render (hoy es síncrono y bloqueante;
-  bien para probar, no para producción con muchos usuarios a la vez).
-- Conectar la foto subida de cada personaje al proveedor de imágenes real
-  (hoy la subida y el guardado ya funcionan — `/api/upload-foto` — pero el
-  proveedor "placeholder" todavía no la usa para generar arte).
+  bien para probar, no para producción con muchos usuarios a la vez —
+  además en el plan free de Render las conexiones HTTP tienen un límite de
+  tiempo, así que capítulos largos con generación real podrían llegar a
+  cortarse).
+- Almacenamiento persistente de los videos generados (hoy quedan en disco
+  del servidor; en el plan free de Render el disco es efímero y se pierde
+  en cada redeploy — para producción conviene subir los .mp4 finales a un
+  storage tipo S3/R2).
 - Reproductor/biblioteca "para chicos" más pulido (hoy ya es un formulario
   pensado para la familia, no un panel interno, pero falta pulir la
   experiencia de MIRAR la serie, no solo crearla: autoplay del próximo

@@ -9,11 +9,11 @@
  * que el ensamblado de video con audio sincronizado funciona de punta a
  * punta.
  *
- * En producción, reemplazar por un proveedor real con buena voz en español:
- *   - OpenAI gpt-4o-mini-tts (~$0.015/min) — más barato
- *   - Google Cloud TTS Neural / Azure TTS Neural (~$0.016/min)
- *   - ElevenLabs (~$0.03-0.05/min) — voces más expresivas, ideal para
- *     personajes con mucha personalidad, pero más caro.
+ * Modo "openai": usa `gpt-4o-mini-tts` (API REST de OpenAI) — voz real en
+ * español, ~US$0.015/min. Requiere OPENAI_API_KEY. Voz configurable con
+ * TTS_VOICE (por defecto "coral", cálida). Alternativas si se quiere más
+ * expresividad y el costo no es problema: Google Cloud TTS Neural, Azure
+ * TTS Neural (similar precio a OpenAI), o ElevenLabs (~$0.03-0.05/min).
  * Ver docs/arquitectura-tecnica.md, sección "Costos".
  */
 const { execFile } = require("child_process");
@@ -53,9 +53,48 @@ async function synthesizeScenePlaceholder(scene, outDir) {
   return wavPath;
 }
 
+async function synthesizeSceneOpenAI(scene, outDir) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Falta OPENAI_API_KEY en el entorno para usar TTS_PROVIDER=openai.");
+  }
+  const text = buildNarrationText(scene);
+  const voice = process.env.TTS_VOICE || "coral";
+  const mp3Path = path.join(outDir, `scene-${scene.numero}.mp3`);
+
+  const res = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini-tts",
+      input: text,
+      voice,
+      instructions:
+        "Hablá en español neutro, con voz cálida de narrador/a de cuentos infantiles, " +
+        "ritmo pausado y claro, apto para chicos pequeños.",
+      response_format: "mp3",
+    }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`OpenAI TTS respondió ${res.status}: ${errBody}`);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  fs.writeFileSync(mp3Path, buffer);
+  return mp3Path;
+}
+
 async function synthesizeScene(scene, outDir, provider = "placeholder") {
   if (provider === "placeholder") {
     return synthesizeScenePlaceholder(scene, outDir);
+  }
+  if (provider === "openai") {
+    return synthesizeSceneOpenAI(scene, outDir);
   }
   throw new Error(
     `Proveedor de TTS "${provider}" no implementado todavía en este prototipo. ` +
