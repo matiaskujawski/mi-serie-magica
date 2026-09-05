@@ -65,11 +65,63 @@ function saveDb(rows) {
 // retoma reusando el mismo outDir — las escenas que ya se generaron y
 // pagaron no se vuelven a pedir (ver server/lib/episodeRenderer.js).
 //
-// OJO: este mapa vive en memoria del proceso. Si el servidor se reinicia
-// (deploy nuevo, o el plan free de Render lo duerme) los trabajos en
-// curso se pierden — es una limitación conocida del prototipo, documentada
-// en docs/arquitectura-tecnica.md.
+// OJO: este mapa vive en memoria del proceso, pero cada job también se
+// espeja a disco (ver `persistJob`/`loadPersistedJobs`) precisamente
+// porque el plan free de Render puede reiniciar el proceso a mitad de un
+// render (por ejemplo si se queda sin CPU/memoria en el paso final, que es
+// el más pesado). Sin esto, un reinicio hacía que /api/render/:id/status
+// devolviera 404 "no encontramos ese trabajo" aunque las escenas ya
+// generadas y pagadas siguieran perfectas en el disco — el usuario
+// terminaba sin poder ni ver que se podía reintentar. Con el archivo en
+// disco, al arrancar el server recupera todos los trabajos conocidos y el
+// botón "Reintentar" puede retomar el render justo donde se cortó (ver
+// server/lib/episodeRenderer.js, que ya salta las escenas ya generadas).
 const jobs = new Map();
+
+function jobFilePath(outDir) {
+  return path.join(outDir, "job.json");
+}
+
+function persistJob(job) {
+  try {
+    fs.mkdirSync(job.outDir, { recursive: true });
+    fs.writeFileSync(jobFilePath(job.outDir), JSON.stringify(job, null, 2));
+  } catch (err) {
+    // Persistir el job es una red de seguridad, no algo que deba tumbar el
+    // render si por lo que sea falla (ej. disco lleno).
+    console.error(`No se pudo guardar el estado del trabajo ${job.id} en disco:`, err.message);
+  }
+}
+
+// Al arrancar, relee todos los trabajos que hayan quedado guardados en
+// output/*/job.json de una corrida anterior del proceso. Los que hayan
+// quedado "running" es porque el proceso se cortó a mitad de camino (no
+// porque terminaron mal de verdad), así que se marcan como error con un
+// mensaje claro para la familia en vez de quedar fantasmas.
+function loadPersistedJobs() {
+  const outputRoot = path.join(__dirname, "..", "output");
+  if (!fs.existsSync(outputRoot)) return;
+  for (const entry of fs.readdirSync(outputRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const jobPath = jobFilePath(path.join(outputRoot, entry.name));
+    if (!fs.existsSync(jobPath)) continue;
+    try {
+      const job = JSON.parse(fs.readFileSync(jobPath, "utf-8"));
+      if (job.status === "running") {
+        job.status = "error";
+        job.error =
+          "El servidor se reinició mientras se generaba este capítulo (puede pasar en el plan gratuito). " +
+          "Lo que ya se había generado no se perdió: tocá 'Reintentar' para retomarlo desde ahí.";
+      }
+      jobs.set(job.id, job);
+    } catch (err) {
+      console.error(`No se pudo leer el trabajo guardado en ${jobPath}:`, err.message);
+    }
+  }
+  if (jobs.size) {
+    console.log(`Se recuperaron ${jobs.size} trabajo(s) guardados en disco de una corrida anterior.`);
+  }
+}
 
 function buildJob(id, episodio, personajes, outDir) {
   return {
@@ -91,6 +143,7 @@ function buildJob(id, episodio, personajes, outDir) {
 async function runRenderJob(job) {
   job.status = "running";
   job.error = null;
+  persistJob(job);
   try {
     const { finalPath, hookPath, log } = await renderEpisode(job.episodio, {
       outDir: job.outDir,
@@ -99,6 +152,7 @@ async function runRenderJob(job) {
       personajes: job.personajes,
       onProgress: (update) => {
         job.progress = update;
+        persistJob(job);
       },
     });
     job.log = log;
@@ -125,6 +179,7 @@ async function runRenderJob(job) {
     job.status = "error";
     job.error = err.message;
   }
+  persistJob(job);
 }
 
 // 0) Sube la foto de referencia de un personaje (opcional). Devuelve una
@@ -158,6 +213,7 @@ app.post("/api/render", (req, res) => {
   const outDir = path.join(__dirname, "..", "output", id);
   const job = buildJob(id, episodio, personajes, outDir);
   jobs.set(id, job);
+  persistJob(job);
 
   res.json({ ok: true, job_id: id });
   runRenderJob(job);
@@ -210,6 +266,8 @@ app.get("/api/episodios", (req, res) => {
   }
   res.json({ ok: true, episodios: rows, ultimo_capitulo_por_serie: porSerie });
 });
+
+loadPersistedJobs();
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

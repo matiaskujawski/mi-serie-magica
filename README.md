@@ -148,6 +148,36 @@ red, etc.) no te obligue a pagar de nuevo lo que ya se generó bien:
   personaje ya "creado" no se vuelve a pagar en el próximo capítulo, y de
   paso mantiene la misma cara entre episodios.
 
+## Cómo se sostiene esto en el plan gratuito de Render (sin pagar más)
+
+El plan free de Render da muy poca CPU (0.15 núcleo, un techo duro) y 512MB
+de RAM. En una prueba real se vio que el proceso puede reiniciarse solo
+cerca del final de un render (el paso más pesado de todos: el clip
+vertical para redes, que combina blur + superposición + zoom en una sola
+pasada de ffmpeg). Sin tocar de plan, se hicieron dos cosas para que esto
+no te haga perder ni plata ni el trabajo ya hecho:
+
+1. **ffmpeg más liviano**: todos los encodes usan `-preset veryfast` y un
+   solo hilo (en una CPU fraccionada, dejar que ffmpeg reparta el trabajo
+   en varios hilos solo suma overhead, no velocidad real), y el clip
+   vertical bajó de 1080x1920 a 720x1280 (menos de la mitad de píxeles a
+   procesar). El video final pesa un poco más por el preset más rápido,
+   pero baja bastante la chance de que el servidor se quede sin recursos.
+2. **El trabajo sobrevive a un reinicio del servidor**: cada trabajo de
+   render ahora también se guarda en un `job.json` dentro de su carpeta en
+   `output/`, no solo en memoria. Si el proceso se reinicia a mitad de
+   camino, al arrancar de nuevo relee esos archivos y recupera el trabajo
+   (en vez de que `/api/render/:id/status` devuelva "no encontramos ese
+   trabajo" para siempre). El botón "Reintentar" en ese caso retoma el
+   render justo donde se cortó, sin volver a pagar las escenas que ya
+   estaban listas — igual que un reintento por cualquier otro motivo.
+
+Esto reduce bastante el riesgo y el impacto de un corte, pero el techo de
+CPU/RAM del plan free sigue siendo un techo real: si en el futuro los
+capítulos son más largos o más pesados, la opción más simple para más
+margen sigue siendo pasar al plan "Starter" de Render (US$7/mes, 0.5 CPU/
+512MB) — una decisión de costo, no algo que haga falta ahora mismo.
+
 ## Qué falta para que esto sea un producto (fuera del alcance de este prototipo)
 
 - Autenticación de familias, cobro/suscripción, moderación de contenido

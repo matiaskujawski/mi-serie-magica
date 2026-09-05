@@ -24,8 +24,24 @@ const { captionTextFor, shortCaptionFor, buildCaptionFile, drawtextFilter } = re
 const FPS = 25;
 const WIDTH = 1280;
 const HEIGHT = 720;
-const HOOK_WIDTH = 1080;
-const HOOK_HEIGHT = 1920;
+// Antes 1080x1920: en el plan free de Render (0.15 CPU / 512MB) el clip
+// vertical con blur+overlay+zoompan encadenados era el paso más pesado de
+// todo el render y el más probable causante de que el proceso se quedara
+// sin recursos cerca del final. Bajar la resolución del gancho reduce a
+// menos de la mitad los píxeles a procesar en ese paso, sin verse mal en
+// redes (sigue siendo HD).
+const HOOK_WIDTH = 720;
+const HOOK_HEIGHT = 1280;
+
+// Ajustes pensados para correr en hardware muy limitado (CPU fraccionada
+// tipo Render free): "veryfast" y un solo hilo evitan que ffmpeg gaste más
+// CPU/RAM en overhead de paralelismo que no existe de verdad con menos de
+// 1 núcleo disponible, y bajan bastante el tiempo/pico de recursos de cada
+// encode a costa de un archivo levemente más pesado (aceptable para este
+// prototipo). "-loglevel warning" evita acumular en memoria el progreso
+// verboso de ffmpeg en cada llamada.
+const ENCODE_ARGS = ["-preset", "veryfast", "-threads", "1"];
+const QUIET_ARGS = ["-hide_banner", "-loglevel", "warning"];
 
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
@@ -104,6 +120,7 @@ async function renderScene({ imagePath, audioPath, cameraMovement, minDurationSe
   }
 
   await run("ffmpeg", [
+    ...QUIET_ARGS,
     "-y",
     "-loop", "1",
     "-i", imagePath,
@@ -112,6 +129,7 @@ async function renderScene({ imagePath, audioPath, cameraMovement, minDurationSe
     "-map", "0:v",
     "-map", "1:a",
     "-c:v", "libx264",
+    ...ENCODE_ARGS,
     "-pix_fmt", "yuv420p",
     "-c:a", "aac",
     "-shortest",
@@ -151,7 +169,7 @@ async function renderHookScene({ imagePath, audioPath, cameraMovement, minDurati
   const filterComplex =
     `[0:v]split=2[bg][fg];` +
     `[bg]scale=${HOOK_WIDTH}:${HOOK_HEIGHT}:force_original_aspect_ratio=increase,` +
-    `crop=${HOOK_WIDTH}:${HOOK_HEIGHT},boxblur=24:2[bgblur];` +
+    `crop=${HOOK_WIDTH}:${HOOK_HEIGHT},boxblur=16:2[bgblur];` +
     `[fg]scale=${HOOK_WIDTH}:${HOOK_HEIGHT}:force_original_aspect_ratio=decrease[fgscaled];` +
     `[bgblur][fgscaled]overlay=(W-w)/2:(H-h)/2[composite];` +
     `[composite]zoompan=z='${cam.z}':x='${cam.x}':y='${cam.y}':d=${frames}:s=${HOOK_WIDTH}x${HOOK_HEIGHT}:fps=${FPS}[zoomed];` +
@@ -159,6 +177,7 @@ async function renderHookScene({ imagePath, audioPath, cameraMovement, minDurati
     `[titled]${captionDraw}[out]`;
 
   await run("ffmpeg", [
+    ...QUIET_ARGS,
     "-y",
     "-loop", "1",
     "-i", imagePath,
@@ -167,6 +186,7 @@ async function renderHookScene({ imagePath, audioPath, cameraMovement, minDurati
     "-map", "[out]",
     "-map", "1:a",
     "-c:v", "libx264",
+    ...ENCODE_ARGS,
     "-pix_fmt", "yuv420p",
     "-c:a", "aac",
     "-shortest",
@@ -180,6 +200,7 @@ async function renderHookScene({ imagePath, audioPath, cameraMovement, minDurati
 async function renderOutroCard({ imagePath, durationSeconds = 3 }, outPath) {
   const frames = Math.max(2, Math.round(durationSeconds * FPS));
   await run("ffmpeg", [
+    ...QUIET_ARGS,
     "-y",
     "-loop", "1",
     "-i", imagePath,
@@ -188,6 +209,7 @@ async function renderOutroCard({ imagePath, durationSeconds = 3 }, outPath) {
     "-t", String(durationSeconds),
     "-vf", `scale=${HOOK_WIDTH}:${HOOK_HEIGHT},fps=${FPS}`,
     "-c:v", "libx264",
+    ...ENCODE_ARGS,
     "-pix_fmt", "yuv420p",
     "-c:a", "aac",
     outPath,
@@ -200,7 +222,10 @@ async function concatScenes(sceneFiles, outPath) {
   const listContent = sceneFiles.map((f) => `file '${path.resolve(f)}'`).join("\n");
   fs.writeFileSync(listPath, listContent, "utf-8");
 
+  // Acá NO se re-codifica (-c copy): es solo pegar los .mp4 de cada escena
+  // uno después del otro, así que este paso ya era liviano de por sí.
   await run("ffmpeg", [
+    ...QUIET_ARGS,
     "-y",
     "-f", "concat",
     "-safe", "0",
