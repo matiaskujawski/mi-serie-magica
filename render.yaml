@@ -1,0 +1,17 @@
+# Blueprint de Render: si en el dashboard elegís "New > Blueprint" y
+# apuntás a este repo, Render lee este archivo y configura el servicio
+# solo. (También se puede crear el servicio a mano eligiendo "Docker" como
+# entorno — este archivo es solo para no tener que tocar nada a mano.)
+services:
+  - type: web
+    name: mi-serie-magica
+    runtime: docker
+    plan: free
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false # lo cargás vos a mano en el dashboard (Environment), nunca en el repo
+      - key: IMAGE_PROVIDER
+        value: placeholder
+      - key: TTS_PROVIDER
+        value: placeholder
+    healthCheckPath: /web/index.html

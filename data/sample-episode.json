@@ -1,0 +1,85 @@
+{
+  "serie": {
+    "titulo": "Las Aventuras de Toby y Estrellita",
+    "temporada": 1,
+    "capitulo": 1,
+    "titulo_capitulo": "El Bosque que Brilla",
+    "duracion_objetivo_seg": 40
+  },
+  "personajes_en_capitulo": ["Toby", "Estrellita"],
+  "resumen_capitulo": "Toby, el perro marrón de la familia, encuentra un mapa mágico y junto a Estrellita, un hada de luz, parten a descubrir por qué el bosque dejó de brillar.",
+  "gancho": {
+    "escena_numero": 3,
+    "linea": "El bosque mágico dejó de brillar... ¿lograrán salvarlo?"
+  },
+  "escenas": [
+    {
+      "numero": 1,
+      "lugar": "Jardín de casa, de día",
+      "descripcion_visual": "@Toby (perro marrón mediano, orejas caídas, collar rojo) olfatea un pergamino brillante entre las flores del jardín. Estilo cuento ilustrado, colores cálidos, luz de mañana.",
+      "personajes_en_escena": ["Toby"],
+      "movimiento_camara": "zoom_in",
+      "narracion": "Una mañana soleada, Toby encontró algo brillante escondido entre las flores del jardín.",
+      "dialogos": [],
+      "duracion_seg": 5,
+      "efectos_sonido": ["pajaros cantando"],
+      "texto_en_pantalla": null
+    },
+    {
+      "numero": 2,
+      "lugar": "Jardín de casa, de día",
+      "descripcion_visual": "@Toby con el mapa mágico en la boca, mirando hacia el cielo donde aparece una pequeña luz brillante. Estilo cuento ilustrado, colores cálidos.",
+      "personajes_en_escena": ["Toby", "Estrellita"],
+      "movimiento_camara": "pan_right",
+      "narracion": "Era un mapa mágico. Y de repente, una lucecita apareció flotando en el aire.",
+      "dialogos": [
+        {"personaje": "Estrellita", "linea": "¡Hola, Toby! Ese mapa nos lleva al Bosque que Brilla."}
+      ],
+      "duracion_seg": 6,
+      "efectos_sonido": ["campanitas magicas"],
+      "texto_en_pantalla": null
+    },
+    {
+      "numero": 3,
+      "lugar": "Entrada del bosque encantado",
+      "descripcion_visual": "@Toby y @Estrellita (hada pequeña de luz dorada, alas transparentes) entrando juntos a un bosque frondoso con árboles altos, algo apagado en color. Estilo cuento ilustrado.",
+      "personajes_en_escena": ["Toby", "Estrellita"],
+      "movimiento_camara": "static",
+      "narracion": "El bosque, que siempre brillaba de noche, ahora se veía apagado y triste.",
+      "dialogos": [
+        {"personaje": "Toby", "linea": "¡Guau! Algo no anda bien por aquí."}
+      ],
+      "duracion_seg": 6,
+      "efectos_sonido": ["viento suave"],
+      "texto_en_pantalla": null
+    },
+    {
+      "numero": 4,
+      "lugar": "Claro del bosque, junto a un árbol gigante",
+      "descripcion_visual": "@Toby y @Estrellita descubren que las luciérnagas del árbol gigante están escondidas y asustadas. Estilo cuento ilustrado, tonos violetas y azules.",
+      "personajes_en_escena": ["Toby", "Estrellita"],
+      "movimiento_camara": "zoom_out",
+      "narracion": "Al llegar al árbol más grande del bosque, descubrieron a las luciérnagas escondidas, muy asustadas.",
+      "dialogos": [
+        {"personaje": "Estrellita", "linea": "No tengan miedo, amiguitas. Vinimos a ayudar."}
+      ],
+      "duracion_seg": 6,
+      "efectos_sonido": ["luciernagas brillando"],
+      "texto_en_pantalla": null
+    },
+    {
+      "numero": 5,
+      "lugar": "Claro del bosque, de noche",
+      "descripcion_visual": "El bosque completo brillando con luciérnagas y luz dorada, @Toby y @Estrellita celebrando en el centro. Estilo cuento ilustrado, colores brillantes y cálidos.",
+      "personajes_en_escena": ["Toby", "Estrellita"],
+      "movimiento_camara": "zoom_in",
+      "narracion": "Con un poco de coraje y mucha amistad, el bosque volvió a brillar como nunca antes.",
+      "dialogos": [
+        {"personaje": "Toby", "linea": "¡Lo logramos, Estrellita!"}
+      ],
+      "duracion_seg": 7,
+      "efectos_sonido": ["musica alegre"],
+      "texto_en_pantalla": "Fin del Capítulo 1"
+    }
+  ]
+}

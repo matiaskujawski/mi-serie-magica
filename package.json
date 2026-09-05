@@ -1,0 +1,18 @@
+{
+  "name": "mini-series-personalizada",
+  "version": "0.1.0",
+  "description": "Prototipo: plataforma para generar mini-series animadas personalizadas para chicos a partir de un guion básico y personajes.",
+  "type": "commonjs",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "demo:render": "node scripts/test-render.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^9.0.1"
+  }
+}
