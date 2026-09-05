@@ -33,6 +33,7 @@ const upload = multer({
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 app.use("/web", express.static(path.join(__dirname, "..", "web")));
+app.get("/", (req, res) => res.redirect("/web/index.html"));
 app.use("/output", express.static(path.join(__dirname, "..", "output")));
 app.use("/uploads", express.static(UPLOADS_DIR));
 
