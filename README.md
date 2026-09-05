@@ -128,15 +128,35 @@ El ensamblado de video (`videoAssembler.js`) y el resto del pipeline no
 necesitan ningún cambio: reciben una imagen y un audio por escena sin
 importar de dónde salieron.
 
+## Cómo funciona el progreso y los reintentos (para no desperdiciar plata)
+
+Como cada escena le pega a APIs pagas (fal.ai + OpenAI), el render está
+armado para que un problema a mitad de camino (sin crédito, un error de
+red, etc.) no te obligue a pagar de nuevo lo que ya se generó bien:
+
+- `POST /api/render` ya no espera a que termine todo — arranca el render
+  en segundo plano y devuelve un `job_id` al toque.
+- El frontend consulta `GET /api/render/:id/status` cada 1.5s y muestra
+  una barra de progreso real (basada en pasos completados, no un
+  spinner genérico) con el detalle de qué escena se está generando.
+- Si un trabajo falla, aparece un botón **"Reintentar"** que llama a
+  `POST /api/render/:id/retry`: como cada escena queda guardada en disco
+  con un nombre fijo (`scene-N.png` / `.mp3` / `.mp4`), el reintento salta
+  las escenas que ya están listas y solo repite la que falló en adelante.
+- Las referencias visuales de personajes (para los que no tienen foto)
+  también se cachean para siempre en `output/character-refs/` — un
+  personaje ya "creado" no se vuelve a pagar en el próximo capítulo, y de
+  paso mantiene la misma cara entre episodios.
+
 ## Qué falta para que esto sea un producto (fuera del alcance de este prototipo)
 
 - Autenticación de familias, cobro/suscripción, moderación de contenido
   subido (fotos de chicos/mascotas).
-- Cola de trabajos asíncrona para el render (hoy es síncrono y bloqueante;
-  bien para probar, no para producción con muchos usuarios a la vez —
-  además en el plan free de Render las conexiones HTTP tienen un límite de
-  tiempo, así que capítulos largos con generación real podrían llegar a
-  cortarse).
+- El render ya no es una sola request bloqueante — ver "Cómo funciona el
+  progreso y los reintentos" abajo. Sigue siendo un trabajo en memoria del
+  proceso (no una cola persistente tipo Redis/BullMQ), así que un reinicio
+  del servidor a mitad de un render pierde ese trabajo puntual (aunque las
+  escenas ya generadas quedan en disco).
 - Almacenamiento persistente de los videos generados (hoy quedan en disco
   del servidor; en el plan free de Render el disco es efímero y se pierde
   en cada redeploy — para producción conviene subir los .mp4 finales a un
