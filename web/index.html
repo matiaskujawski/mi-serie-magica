@@ -185,6 +185,21 @@
   details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 16px; }
 
   .status { margin-top: 10px; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+  .progress-wrap { margin-top: 14px; }
+  .progress-bar {
+    background: #1f1740;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    height: 10px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 2%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width 0.5s ease;
+  }
+  .btn-retry { background: transparent; color: var(--accent); border: 1px solid var(--accent); width: 100%; margin-top: 10px; }
   .grid-episodios {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -274,7 +289,11 @@
     </details>
 
     <button class="btn btn-primary" id="btnGenerar" type="button">✨ Crear mi capítulo</button>
+    <div class="progress-wrap" id="progressWrap" hidden>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
     <div class="status" id="status"></div>
+    <button class="btn btn-retry" id="btnReintentar" type="button" hidden>🔁 Reintentar (retoma donde se cortó, no repite lo ya generado)</button>
     <details id="detalleGuion" hidden>
       <summary>Ver guion técnico generado (para curiosos)</summary>
       <pre id="guionOutput"></pre>

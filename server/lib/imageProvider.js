@@ -7,27 +7,66 @@
  *
  * Modo "fal": usa fal.ai (modelos Flux) con referencia de personaje, para
  * mantener consistencia visual entre escenas y episodios:
- *   1. Una sola vez por episodio (`ensureCharacterReferences`), por cada
- *      personaje: si la familia subió una foto, esa foto ES la referencia;
- *      si no, se genera UNA imagen de referencia a partir de su
- *      descripción (fal-ai/flux/schnell, texto -> imagen). Ese costo se
- *      paga una sola vez por personaje, no por escena.
+ *   1. Una sola vez POR PERSONAJE EN TODA LA VIDA del proyecto (no por
+ *      episodio) — ver `ensureCharacterReferences`: si la familia subió
+ *      una foto, esa foto ES la referencia; si no, se genera UNA imagen de
+ *      referencia a partir de su descripción (fal-ai/flux/schnell, texto
+ *      -> imagen), se descarga a `output/character-refs/` y se cachea en
+ *      `output/character-refs/cache.json` (clave = nombre + hash de la
+ *      descripción). De ahí en más, todos los episodios de ese personaje
+ *      reusan la MISMA referencia: no se vuelve a pagar, y de paso se
+ *      soluciona el problema de que el personaje "cambie de cara" entre
+ *      capítulos.
  *   2. Por cada escena (`generateSceneImage`), se usa fal-ai/flux-pro/kontext
  *      (imagen -> imagen) para "editar" la referencia del personaje
  *      principal de la escena hacia el lugar/situación que describe
  *      `descripcion_visual`, manteniendo su aspecto. Si la escena tiene
  *      más personajes, se los menciona en el prompt de texto (Kontext solo
  *      acepta una imagen de referencia por llamada).
- * Requiere FAL_KEY. Si un personaje tiene foto propia, esa foto tiene que
- * ser una URL pública (por eso PUBLIC_BASE_URL: fal.ai necesita poder
- * descargarla, no le sirve una ruta local).
+ * Requiere FAL_KEY. Tanto las fotos que suben las familias como las
+ * referencias generadas y cacheadas tienen que ser URLs públicas (por eso
+ * PUBLIC_BASE_URL: fal.ai necesita poder descargarlas, no le sirve una
+ * ruta local).
  * Ver docs/arquitectura-tecnica.md, sección "Generación de imágenes".
  */
 const { execFile } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
 const PLACEHOLDER_SCRIPT = path.join(__dirname, "..", "..", "scripts", "generate_placeholder_image.py");
+const CHARACTER_REFS_DIR = path.join(__dirname, "..", "..", "output", "character-refs");
+const CHARACTER_REFS_CACHE = path.join(CHARACTER_REFS_DIR, "cache.json");
+
+function slugify(text) {
+  return (text || "personaje")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+// Clave estable por personaje: nombre + hash corto de su descripción, para
+// que si alguien cambia la descripción se genere una referencia nueva (en
+// vez de quedar pegado a un aspecto que ya no corresponde).
+function characterCacheKey(p) {
+  const hash = crypto.createHash("sha1").update(p.descripcion || "").digest("hex").slice(0, 10);
+  return `${slugify(p.nombre)}-${hash}`;
+}
+
+function loadCharacterRefCache() {
+  try {
+    return JSON.parse(fs.readFileSync(CHARACTER_REFS_CACHE, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function saveCharacterRefCache(cache) {
+  fs.mkdirSync(CHARACTER_REFS_DIR, { recursive: true });
+  fs.writeFileSync(CHARACTER_REFS_CACHE, JSON.stringify(cache, null, 2));
+}
 
 function runPython(args) {
   return new Promise((resolve, reject) => {
@@ -89,19 +128,33 @@ async function falRequest(model, body) {
   return res.json();
 }
 
-// Se llama UNA VEZ por episodio, antes de generar las escenas. Devuelve
-// { nombrePersonaje: urlDeReferencia }.
+// Se llama antes de generar las escenas. Devuelve { nombrePersonaje: urlDeReferencia }.
+// Para personajes sin foto propia, primero busca en el caché en disco
+// (output/character-refs/cache.json) antes de gastar una llamada a fal.ai —
+// así un personaje que ya apareció en un capítulo anterior no se vuelve a
+// pagar ni cambia de aspecto.
 async function ensureCharacterReferences(personajes, provider) {
   const refs = {};
   if (provider !== "fal" || !personajes) return refs;
+
+  const cache = loadCharacterRefCache();
+  let cacheDirty = false;
 
   for (const p of personajes) {
     if (p.foto_referencia_url) {
       refs[p.nombre] = absoluteUrl(p.foto_referencia_url);
       continue;
     }
-    // Sin foto: generamos UNA imagen de referencia a partir de la
-    // descripción, para reusarla en todas las escenas de este personaje.
+
+    const key = characterCacheKey(p);
+    if (cache[key]) {
+      refs[p.nombre] = absoluteUrl(cache[key]);
+      continue;
+    }
+
+    // Sin foto y sin caché: generamos UNA imagen de referencia a partir de
+    // la descripción, la guardamos en disco, y la cacheamos para siempre
+    // (o hasta que cambie la descripción del personaje).
     const prompt =
       `Retrato de personaje de cuento infantil ilustrado, fondo neutro, cuerpo entero: ` +
       `${p.nombre} — ${p.descripcion || "sin descripción"}. Estilo cálido, colores vivos, apto para chicos.`;
@@ -112,8 +165,17 @@ async function ensureCharacterReferences(personajes, provider) {
     });
     const url = data && data.images && data.images[0] && data.images[0].url;
     if (!url) throw new Error(`fal.ai no devolvió una imagen de referencia para "${p.nombre}".`);
-    refs[p.nombre] = url;
+
+    fs.mkdirSync(CHARACTER_REFS_DIR, { recursive: true });
+    const localPath = path.join(CHARACTER_REFS_DIR, `${key}.png`);
+    await downloadToFile(url, localPath);
+    const publicPath = `/character-refs/${key}.png`;
+    cache[key] = publicPath;
+    cacheDirty = true;
+    refs[p.nombre] = absoluteUrl(publicPath);
   }
+
+  if (cacheDirty) saveCharacterRefCache(cache);
   return refs;
 }
 

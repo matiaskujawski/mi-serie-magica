@@ -6,6 +6,9 @@ const guionOutputEl = document.getElementById("guionOutput");
 const detalleGuionEl = document.getElementById("detalleGuion");
 const episodiosEl = document.getElementById("episodios");
 const btnGenerar = document.getElementById("btnGenerar");
+const btnReintentar = document.getElementById("btnReintentar");
+const progressWrap = document.getElementById("progressWrap");
+const progressFill = document.getElementById("progressFill");
 const guionBasicoEl = document.getElementById("guionBasico");
 const btnModoEscribo = document.getElementById("btnModoEscribo");
 const btnModoSorpresa = document.getElementById("btnModoSorpresa");
@@ -179,6 +182,84 @@ function leerEntrada() {
   };
 }
 
+// --- Progreso del render: polling a /api/render/:id/status ---
+let currentJobId = null;
+let pollTimer = null;
+
+function mostrarProgreso(pct) {
+  progressWrap.hidden = false;
+  progressFill.style.width = `${Math.max(2, Math.min(100, pct))}%`;
+}
+
+function ocultarProgreso() {
+  progressWrap.hidden = true;
+  progressFill.style.width = "0%";
+}
+
+function detenerPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function terminarConError(mensaje) {
+  detenerPolling();
+  statusEl.textContent = "Ups, algo falló: " + mensaje;
+  btnReintentar.hidden = false;
+  btnGenerar.disabled = false;
+}
+
+async function consultarProgreso(jobId) {
+  try {
+    const res = await fetch(`${API}/api/render/${jobId}/status`);
+    const data = await res.json();
+    if (!data.ok) return terminarConError(data.error);
+
+    const { stepsDone = 0, totalSteps = 1, message } = data.progress || {};
+    const pct = Math.round((stepsDone / totalSteps) * 100);
+
+    if (data.status === "running") {
+      mostrarProgreso(pct);
+      statusEl.textContent = `${message || "Generando tu capítulo..."} (${pct}%)`;
+    } else if (data.status === "done") {
+      detenerPolling();
+      ocultarProgreso();
+      btnReintentar.hidden = true;
+      btnGenerar.disabled = false;
+      statusEl.textContent = "¡Listo! Tu capítulo se agregó a Mi Serie, abajo. 🎉";
+      cargarEpisodios();
+    } else if (data.status === "error") {
+      terminarConError(data.error);
+    }
+  } catch (err) {
+    terminarConError(err.message);
+  }
+}
+
+function iniciarPolling(jobId) {
+  currentJobId = jobId;
+  btnReintentar.hidden = true;
+  mostrarProgreso(2);
+  consultarProgreso(jobId);
+  pollTimer = setInterval(() => consultarProgreso(jobId), 1500);
+}
+
+btnReintentar.addEventListener("click", async () => {
+  if (!currentJobId) return;
+  btnReintentar.hidden = true;
+  btnGenerar.disabled = true;
+  statusEl.textContent = "Reintentando — retomamos desde donde se cortó, sin repetir (ni volver a pagar) lo que ya estaba listo...";
+  try {
+    const res = await fetch(`${API}/api/render/${currentJobId}/retry`, { method: "POST" });
+    const data = await res.json();
+    if (!data.ok) return terminarConError(data.error);
+    iniciarPolling(data.job_id);
+  } catch (err) {
+    terminarConError(err.message);
+  }
+});
+
 // --- Flujo principal: subir fotos -> guion -> render ---
 btnGenerar.addEventListener("click", async () => {
   const personajes = leerPersonajes();
@@ -189,6 +270,7 @@ btnGenerar.addEventListener("click", async () => {
   serieTituloEl.value = serieTituloEl.value.trim() || "Mi Serie Mágica";
 
   btnGenerar.disabled = true;
+  btnReintentar.hidden = true;
   try {
     statusEl.textContent = "Subiendo fotos de referencia...";
     await subirFotosPendientes();
@@ -208,7 +290,7 @@ btnGenerar.addEventListener("click", async () => {
     guionOutputEl.textContent = JSON.stringify(episodio, null, 2);
     detalleGuionEl.hidden = false;
 
-    statusEl.textContent = "Generando imágenes y voces de cada escena...";
+    statusEl.textContent = "Arrancando la generación de imágenes y voces...";
     const resRender = await fetch(`${API}/api/render`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -217,11 +299,11 @@ btnGenerar.addEventListener("click", async () => {
     const dataRender = await resRender.json();
     if (!dataRender.ok) throw new Error(dataRender.error);
 
-    statusEl.textContent = "¡Listo! Tu capítulo se agregó a Mi Serie, abajo. 🎉";
-    cargarEpisodios();
+    // A partir de acá el render sigue en el servidor; consultamos el
+    // progreso real en vez de dejar al usuario esperando sin feedback.
+    iniciarPolling(dataRender.job_id);
   } catch (err) {
     statusEl.textContent = "Ups, algo falló: " + err.message;
-  } finally {
     btnGenerar.disabled = false;
   }
 });

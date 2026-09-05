@@ -11,6 +11,7 @@ const { renderEpisode } = require("./lib/episodeRenderer");
 
 const app = express();
 const UPLOADS_DIR = path.join(__dirname, "..", "uploads");
+const CHARACTER_REFS_DIR = path.join(__dirname, "..", "output", "character-refs");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const upload = multer({
@@ -36,6 +37,10 @@ app.use("/web", express.static(path.join(__dirname, "..", "web")));
 app.get("/", (req, res) => res.redirect("/web/index.html"));
 app.use("/output", express.static(path.join(__dirname, "..", "output")));
 app.use("/uploads", express.static(UPLOADS_DIR));
+// Referencias de personajes generadas y cacheadas por imageProvider.js —
+// tienen que quedar accesibles públicamente porque fal.ai las vuelve a
+// descargar en cada escena nueva (ver server/lib/imageProvider.js).
+app.use("/character-refs", express.static(CHARACTER_REFS_DIR));
 
 const EPISODES_DB = path.join(__dirname, "..", "output", "episodes.json");
 
@@ -47,6 +52,79 @@ function loadDb() {
 function saveDb(rows) {
   fs.mkdirSync(path.dirname(EPISODES_DB), { recursive: true });
   fs.writeFileSync(EPISODES_DB, JSON.stringify(rows, null, 2));
+}
+
+// --- Trabajos de render en curso ---
+// El render de un capítulo puede tardar minutos y llamar a APIs pagas
+// escena por escena, así que en vez de tener al navegador esperando una
+// sola request gigante (bloqueante, y con riesgo de timeout), lo tratamos
+// como un "trabajo": /api/render lo arranca y responde al toque con un
+// job_id, y el frontend consulta /api/render/:id/status cada tanto para
+// mostrar progreso real. Si un trabajo falla a mitad de camino (por
+// ejemplo por quedarse sin crédito en una API), /api/render/:id/retry lo
+// retoma reusando el mismo outDir — las escenas que ya se generaron y
+// pagaron no se vuelven a pedir (ver server/lib/episodeRenderer.js).
+//
+// OJO: este mapa vive en memoria del proceso. Si el servidor se reinicia
+// (deploy nuevo, o el plan free de Render lo duerme) los trabajos en
+// curso se pierden — es una limitación conocida del prototipo, documentada
+// en docs/arquitectura-tecnica.md.
+const jobs = new Map();
+
+function buildJob(id, episodio, personajes, outDir) {
+  return {
+    id,
+    status: "running", // "running" | "done" | "error"
+    creado: new Date().toISOString(),
+    episodio,
+    personajes,
+    outDir,
+    imageProvider: process.env.IMAGE_PROVIDER || "placeholder",
+    ttsProvider: process.env.TTS_PROVIDER || "placeholder",
+    progress: { stepsDone: 0, totalSteps: 1, message: "Arrancando..." },
+    log: [],
+    result: null,
+    error: null,
+  };
+}
+
+async function runRenderJob(job) {
+  job.status = "running";
+  job.error = null;
+  try {
+    const { finalPath, hookPath, log } = await renderEpisode(job.episodio, {
+      outDir: job.outDir,
+      imageProvider: job.imageProvider,
+      ttsProvider: job.ttsProvider,
+      personajes: job.personajes,
+      onProgress: (update) => {
+        job.progress = update;
+      },
+    });
+    job.log = log;
+
+    const rows = loadDb();
+    const publicPath = `/output/${job.id}/${path.basename(finalPath)}`;
+    const hookPublicPath = `/output/${job.id}/${path.basename(hookPath)}`;
+    rows.push({
+      id: job.id,
+      titulo: job.episodio.serie.titulo,
+      titulo_capitulo: job.episodio.serie.titulo_capitulo,
+      temporada: job.episodio.serie.temporada,
+      capitulo: job.episodio.serie.capitulo,
+      resumen: job.episodio.resumen_capitulo,
+      video_url: publicPath,
+      hook_url: hookPublicPath,
+      creado: new Date().toISOString(),
+    });
+    saveDb(rows);
+
+    job.result = { video_url: publicPath, hook_url: hookPublicPath };
+    job.status = "done";
+  } catch (err) {
+    job.status = "error";
+    job.error = err.message;
+  }
 }
 
 // 0) Sube la foto de referencia de un personaje (opcional). Devuelve una
@@ -68,43 +146,57 @@ app.post("/api/guion", async (req, res) => {
   }
 });
 
-// 2) Renderiza un guion ya generado (imagen + audio + video por escena).
-app.post("/api/render", async (req, res) => {
-  try {
-    const episodio = req.body.episodio;
-    const personajes = req.body.personajes || [];
-    if (!episodio || !episodio.escenas) {
-      return res.status(400).json({ ok: false, error: "Falta 'episodio' con su lista de 'escenas'." });
-    }
-    const id = uuidv4().slice(0, 8);
-    const outDir = path.join(__dirname, "..", "output", id);
-    const { finalPath, hookPath, log } = await renderEpisode(episodio, {
-      outDir,
-      imageProvider: process.env.IMAGE_PROVIDER || "placeholder",
-      ttsProvider: process.env.TTS_PROVIDER || "placeholder",
-      personajes,
-    });
-
-    const rows = loadDb();
-    const publicPath = `/output/${id}/${path.basename(finalPath)}`;
-    const hookPublicPath = `/output/${id}/${path.basename(hookPath)}`;
-    rows.push({
-      id,
-      titulo: episodio.serie.titulo,
-      titulo_capitulo: episodio.serie.titulo_capitulo,
-      temporada: episodio.serie.temporada,
-      capitulo: episodio.serie.capitulo,
-      resumen: episodio.resumen_capitulo,
-      video_url: publicPath,
-      hook_url: hookPublicPath,
-      creado: new Date().toISOString(),
-    });
-    saveDb(rows);
-
-    res.json({ ok: true, video_url: publicPath, hook_url: hookPublicPath, log });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+// 2) Arranca el render de un guion ya generado (imagen + audio + video por
+// escena). Responde enseguida con un job_id — no espera a que termine.
+app.post("/api/render", (req, res) => {
+  const episodio = req.body.episodio;
+  const personajes = req.body.personajes || [];
+  if (!episodio || !episodio.escenas) {
+    return res.status(400).json({ ok: false, error: "Falta 'episodio' con su lista de 'escenas'." });
   }
+  const id = uuidv4().slice(0, 8);
+  const outDir = path.join(__dirname, "..", "output", id);
+  const job = buildJob(id, episodio, personajes, outDir);
+  jobs.set(id, job);
+
+  res.json({ ok: true, job_id: id });
+  runRenderJob(job);
+});
+
+// 2.bis) Progreso de un trabajo de render en curso.
+app.get("/api/render/:id/status", (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) {
+    return res.status(404).json({
+      ok: false,
+      error: "No encontramos ese trabajo (puede haberse reiniciado el servidor). Probá generar el capítulo de nuevo.",
+    });
+  }
+  res.json({
+    ok: true,
+    status: job.status,
+    progress: job.progress,
+    log: job.log,
+    result: job.result,
+    error: job.error,
+  });
+});
+
+// 2.ter) Reintenta un trabajo que falló, reusando lo que ya se generó (no
+// vuelve a pagar las escenas que ya estaban listas).
+app.post("/api/render/:id/retry", (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) {
+    return res.status(404).json({
+      ok: false,
+      error: "No encontramos ese trabajo para reintentar (puede haberse reiniciado el servidor). Probá generar el capítulo de nuevo.",
+    });
+  }
+  if (job.status === "running") {
+    return res.json({ ok: true, job_id: job.id }); // ya está corriendo, no lo disparamos dos veces
+  }
+  res.json({ ok: true, job_id: job.id });
+  runRenderJob(job);
 });
 
 // 3) Biblioteca de episodios ya generados (para la pantalla "mi serie").
