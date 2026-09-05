@@ -137,7 +137,7 @@
   .photo-upload img { width: 100%; height: 100%; object-fit: cover; }
   .char-fields { flex: 1; }
   .char-fields input { margin-bottom: 6px; }
-  select.c-tipo {
+  select.c-tipo, select.c-voz {
     width: 100%;
     padding: 8px 10px;
     border-radius: 10px;
@@ -146,6 +146,55 @@
     color: var(--text);
     font-size: 13px;
     margin-bottom: 6px;
+  }
+
+  .foto-toggle { display: flex; gap: 6px; margin-top: 8px; }
+  .foto-toggle button {
+    flex: 1;
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #1f1740;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .foto-toggle button.active {
+    background: var(--accent2);
+    color: #0a2323;
+    border-color: var(--accent2);
+    font-weight: 700;
+  }
+  .draw-panel { margin-top: 8px; }
+  .draw-toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+  .swatch {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    cursor: pointer;
+    padding: 0;
+  }
+  .swatch.selected { border-color: var(--text); }
+  .draw-btn {
+    padding: 5px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #1f1740;
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .draw-btn.confirm { background: var(--accent); color: #22160a; border-color: var(--accent); font-weight: 700; }
+  canvas.c-canvas {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    max-width: 220px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: #fff;
+    touch-action: none;
+    cursor: crosshair;
+    display: block;
   }
 
   .guion-toggle { display: flex; gap: 8px; margin-bottom: 10px; }
@@ -271,6 +320,9 @@
 
     <label>¿Cuán largo el capítulo?</label>
     <div class="chip-row" id="chipsDuracion"></div>
+
+    <label>¿Qué voz para la narración?</label>
+    <div class="chip-row" id="chipsVozNarracion"></div>
 
     <details>
       <summary>Opciones avanzadas (título de la serie, temporada, capítulo)</summary>

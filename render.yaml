@@ -18,8 +18,6 @@ services:
         value: fal
       - key: TTS_PROVIDER
         value: openai
-      - key: TTS_VOICE
-        value: coral
       - key: PUBLIC_BASE_URL
         sync: false # tu URL real de Render, ej: https://mi-serie-magica.onrender.com
     healthCheckPath: /web/index.html

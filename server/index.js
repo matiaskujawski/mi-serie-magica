@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const { generateEpisodeScript } = require("./lib/claude");
 const { renderEpisode } = require("./lib/episodeRenderer");
+const { listPresets } = require("./lib/voicePresets");
 
 const app = express();
 const UPLOADS_DIR = path.join(__dirname, "..", "uploads");
@@ -123,13 +124,14 @@ function loadPersistedJobs() {
   }
 }
 
-function buildJob(id, episodio, personajes, outDir) {
+function buildJob(id, episodio, personajes, vozNarracion, outDir) {
   return {
     id,
     status: "running", // "running" | "done" | "error"
     creado: new Date().toISOString(),
     episodio,
     personajes,
+    vozNarracion,
     outDir,
     imageProvider: process.env.IMAGE_PROVIDER || "placeholder",
     ttsProvider: process.env.TTS_PROVIDER || "placeholder",
@@ -150,6 +152,7 @@ async function runRenderJob(job) {
       imageProvider: job.imageProvider,
       ttsProvider: job.ttsProvider,
       personajes: job.personajes,
+      vozNarracion: job.vozNarracion,
       onProgress: (update) => {
         job.progress = update;
         persistJob(job);
@@ -206,12 +209,13 @@ app.post("/api/guion", async (req, res) => {
 app.post("/api/render", (req, res) => {
   const episodio = req.body.episodio;
   const personajes = req.body.personajes || [];
+  const vozNarracion = req.body.voz_narracion;
   if (!episodio || !episodio.escenas) {
     return res.status(400).json({ ok: false, error: "Falta 'episodio' con su lista de 'escenas'." });
   }
   const id = uuidv4().slice(0, 8);
   const outDir = path.join(__dirname, "..", "output", id);
-  const job = buildJob(id, episodio, personajes, outDir);
+  const job = buildJob(id, episodio, personajes, vozNarracion, outDir);
   jobs.set(id, job);
   persistJob(job);
 
@@ -253,6 +257,12 @@ app.post("/api/render/:id/retry", (req, res) => {
   }
   res.json({ ok: true, job_id: job.id });
   runRenderJob(job);
+});
+
+// 2.quater) Catálogo de voces disponibles (para los selectores del
+// formulario: voz de cada personaje + voz de la locución/narración).
+app.get("/api/voces", (req, res) => {
+  res.json({ ok: true, voces: listPresets() });
 });
 
 // 3) Biblioteca de episodios ya generados (para la pantalla "mi serie").

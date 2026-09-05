@@ -117,8 +117,9 @@ activarlos alcanza con variables de entorno, sin tocar código:
    las fotos que suben los usuarios.
 2. **Voz real en español** (OpenAI `gpt-4o-mini-tts`, ~US$0.015/min):
    conseguir una clave en platform.openai.com/api-keys y setear
-   `OPENAI_API_KEY` y `TTS_PROVIDER=openai`. La voz se elige con
-   `TTS_VOICE` (por defecto `coral`, cálida).
+   `OPENAI_API_KEY` y `TTS_PROVIDER=openai`. Con esto activado, cada familia
+   elige la voz desde el formulario (ver siguiente sección) — la variable
+   `TTS_VOICE` ya no se usa.
 
 Ver `.env.example` para la lista completa, y `render.yaml` para cómo
 quedan seteadas estas variables en Render (las claves secretas se cargan a
@@ -127,6 +128,33 @@ mano en el dashboard de Render, nunca en el repo).
 El ensamblado de video (`videoAssembler.js`) y el resto del pipeline no
 necesitan ningún cambio: reciben una imagen y un audio por escena sin
 importar de dónde salieron.
+
+## Personalización: foto o dibujo de referencia, y voces
+
+- **Foto o dibujo por personaje:** en cada tarjeta de personaje del
+  formulario hay un toggle "📷 Foto" / "✏️ Dibujar". Si el chico prefiere
+  dibujar a su personaje en vez de (o además de) subir una foto, el lienzo
+  queda guardado igual que una foto subida — se manda al mismo endpoint
+  (`/api/upload-foto`) y de ahí en más se usa exactamente igual como
+  referencia visual para fal.ai.
+- **Voz por personaje + voz de narración:** cada personaje tiene un
+  selector de voz (para sus diálogos), y hay un selector aparte para la
+  narración general del capítulo. Los presets disponibles (mujer/hombre,
+  joven/adulto/mayor, y un par de estilos extra como "heroica" o
+  "divertida") están en `server/lib/voicePresets.js` — son una curaduría
+  propia combinando una voz base de OpenAI con instrucciones de actuación,
+  ya que OpenAI no publica género/edad oficial por voz. El catálogo se
+  sirve desde `GET /api/voces` para que el frontend no tenga la lista
+  hardcodeada por duplicado.
+  - Con `TTS_PROVIDER=openai`, cada línea de diálogo ahora se sintetiza por
+    separado con la voz de SU personaje (antes todo el texto de la escena,
+    incluida la narración de quién decía qué, salía con una sola voz). Esto
+    multiplica la cantidad de llamados a la API por escena (uno por la
+    narración + uno por cada línea de diálogo, en vez de uno solo), pero el
+    costo sigue estando dominado por los minutos de audio generados, no por
+    la cantidad de llamados — el impacto en el costo total debería ser
+    chico. Cada pedacito respeta la misma lógica de reintento barato que el
+    resto del pipeline (si ya se generó, no se vuelve a pagar).
 
 ## Cómo funciona el progreso y los reintentos (para no desperdiciar plata)
 

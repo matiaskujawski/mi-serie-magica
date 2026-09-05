@@ -66,7 +66,14 @@ function sceneVideoPath(outDir, scene) {
 
 async function renderEpisode(
   episode,
-  { outDir, imageProvider = "placeholder", ttsProvider = "placeholder", personajes = [], onProgress = () => {} }
+  {
+    outDir,
+    imageProvider = "placeholder",
+    ttsProvider = "placeholder",
+    personajes = [],
+    vozNarracion,
+    onProgress = () => {},
+  }
 ) {
   fs.mkdirSync(outDir, { recursive: true });
 
@@ -127,7 +134,7 @@ async function renderEpisode(
       tick(`Escena ${scene.numero}/${totalScenes}: audio ya generado, se reusa.`, sceneProgress);
     } else {
       onProgress({ stepsDone, totalSteps, message: `Escena ${scene.numero}/${totalScenes}: generando la voz...`, ...sceneProgress });
-      audioPath = await synthesizeScene(scene, outDir, ttsProvider);
+      audioPath = await synthesizeScene(scene, outDir, ttsProvider, { personajes, vozNarracion });
       tick(`Escena ${scene.numero}/${totalScenes}: audio listo.`, sceneProgress);
     }
 

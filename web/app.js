@@ -19,6 +19,8 @@ const temporadaEl = document.getElementById("temporada");
 let charSeq = 0;
 let modoGuion = "escribo"; // "escribo" | "sorpresa"
 let ultimoCapituloPorSerie = {};
+let VOCES = []; // catálogo de voces, se completa al arrancar (ver initVoces)
+let chipsVozNarracion = { value: "calido" };
 
 // --- Plantillas rápidas de personajes (para no arrancar de la hoja en blanco) ---
 const TEMPLATES = [
@@ -39,7 +41,17 @@ TEMPLATES.forEach((t) => {
   templatesContainer.appendChild(chip);
 });
 
-function addCharCard({ nombre = "", tipo = "inventado", descripcion = "", descripcionPlaceholder = "Descripción física y de personalidad" } = {}) {
+// --- Colores disponibles para el lienzo de dibujo ---
+const DRAW_COLORS = ["#1a1a1a", "#e63946", "#f4a261", "#f6c445", "#2a9d8f", "#264653", "#7b2cbf", "#ffffff"];
+
+function vozOptionsHtml(selectedValue) {
+  const lista = VOCES.length ? VOCES : [{ id: "calido", label: "Cálida (recomendada)" }];
+  return lista
+    .map((v) => `<option value="${v.id}" ${v.id === selectedValue ? "selected" : ""}>${v.label}</option>`)
+    .join("");
+}
+
+function addCharCard({ nombre = "", tipo = "inventado", descripcion = "", descripcionPlaceholder = "Descripción física y de personalidad", voz = "calido" } = {}) {
   const id = ++charSeq;
   const card = document.createElement("div");
   card.className = "char-card";
@@ -59,7 +71,20 @@ function addCharCard({ nombre = "", tipo = "inventado", descripcion = "", descri
           <option value="mascota_real" ${tipo === "mascota_real" ? "selected" : ""}>Mascota real</option>
           <option value="familiar_real" ${tipo === "familiar_real" ? "selected" : ""}>Familiar real</option>
         </select>
+        <select class="c-voz" title="Voz de este personaje en los diálogos">${vozOptionsHtml(voz)}</select>
       </div>
+    </div>
+    <div class="foto-toggle">
+      <button type="button" class="foto-tab active" data-modo="foto">📷 Foto</button>
+      <button type="button" class="foto-tab" data-modo="dibujo">✏️ Dibujar</button>
+    </div>
+    <div class="draw-panel" hidden>
+      <div class="draw-toolbar">
+        ${DRAW_COLORS.map((c, i) => `<button type="button" class="swatch${i === 0 ? " selected" : ""}" data-color="${c}" style="background:${c}"></button>`).join("")}
+        <button type="button" class="draw-btn borrar">Borrar</button>
+        <button type="button" class="draw-btn confirm usar">✔️ Usar este dibujo</button>
+      </div>
+      <canvas class="c-canvas" width="320" height="320"></canvas>
     </div>
     <textarea class="c-desc" placeholder="${descripcionPlaceholder}" style="margin-top:8px;">${descripcion}</textarea>
   `;
@@ -80,18 +105,98 @@ function addCharCard({ nombre = "", tipo = "inventado", descripcion = "", descri
     };
     reader.readAsDataURL(file);
     card._fotoFile = file;
+    card._fotoFileName = null; // los File nativos ya traen su propio nombre
     card._fotoUrl = null; // se sube recién al generar
   });
+
+  setupFotoODibujo(card, { img, placeholder });
 
   charsContainer.appendChild(card);
   card.querySelector(".c-nombre").focus();
 }
 
-document.getElementById("addChar").addEventListener("click", () => addCharCard());
+// Toggle "Foto" / "Dibujar" + lienzo de dibujo libre. El resultado del
+// dibujo se trata exactamente igual que una foto subida: se guarda en
+// card._fotoFile (acá un Blob del canvas en vez de un File del input) y se
+// sube recién al tocar "Crear mi capítulo" (ver subirFotosPendientes),
+// reusando el mismo endpoint /api/upload-foto.
+function setupFotoODibujo(card, { img, placeholder }) {
+  const tabFoto = card.querySelector('.foto-tab[data-modo="foto"]');
+  const tabDibujo = card.querySelector('.foto-tab[data-modo="dibujo"]');
+  const panel = card.querySelector(".draw-panel");
+  const canvas = card.querySelector(".c-canvas");
+  const ctx = canvas.getContext("2d");
+  let color = DRAW_COLORS[0];
+  let dibujando = false;
 
-// Dos personajes de ejemplo para arrancar
-addCharCard({ nombre: "Toby", tipo: "mascota_real", descripcion: "Perro marrón mediano, orejas caídas, collar rojo. Cariñoso y curioso (basado en foto real de la familia)." });
-addCharCard({ nombre: "Estrellita", tipo: "inventado", descripcion: "Hada pequeña de luz dorada, alas transparentes. Valiente y buena onda." });
+  function fondoBlanco() {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  fondoBlanco();
+
+  function mostrarTab(modo) {
+    tabFoto.classList.toggle("active", modo === "foto");
+    tabDibujo.classList.toggle("active", modo === "dibujo");
+    panel.hidden = modo !== "dibujo";
+  }
+  tabFoto.addEventListener("click", () => mostrarTab("foto"));
+  tabDibujo.addEventListener("click", () => mostrarTab("dibujo"));
+
+  card.querySelectorAll(".swatch").forEach((sw) => {
+    sw.addEventListener("click", () => {
+      color = sw.dataset.color;
+      card.querySelectorAll(".swatch").forEach((s) => s.classList.remove("selected"));
+      sw.classList.add("selected");
+    });
+  });
+
+  function posDesdeEvento(evt) {
+    const rect = canvas.getBoundingClientRect();
+    const escalaX = canvas.width / rect.width;
+    const escalaY = canvas.height / rect.height;
+    return { x: (evt.clientX - rect.left) * escalaX, y: (evt.clientY - rect.top) * escalaY };
+  }
+
+  canvas.addEventListener("pointerdown", (evt) => {
+    dibujando = true;
+    const { x, y } = posDesdeEvento(evt);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = color;
+  });
+  canvas.addEventListener("pointermove", (evt) => {
+    if (!dibujando) return;
+    const { x, y } = posDesdeEvento(evt);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  });
+  ["pointerup", "pointerleave", "pointercancel"].forEach((evtName) => {
+    canvas.addEventListener(evtName, () => {
+      dibujando = false;
+    });
+  });
+
+  card.querySelector(".draw-btn.borrar").addEventListener("click", fondoBlanco);
+
+  card.querySelector(".draw-btn.usar").addEventListener("click", () => {
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      card._fotoFile = blob;
+      card._fotoFileName = "dibujo.png";
+      card._fotoUrl = null;
+      img.src = canvas.toDataURL("image/png");
+      img.hidden = false;
+      placeholder.hidden = true;
+      mostrarTab("foto");
+    }, "image/png");
+  });
+}
+
+document.getElementById("addChar").addEventListener("click", () => addCharCard());
 
 // --- Modo de guion: "lo escribo yo" vs "sorprendeme" ---
 btnModoEscribo.addEventListener("click", () => setModoGuion("escribo"));
@@ -109,7 +214,7 @@ function setModoGuion(modo) {
   }
 }
 
-// --- Chips de edad y duración (selección única) ---
+// --- Chips de selección única (edad, duración, voz de narración) ---
 function buildChipGroup(containerId, options, defaultValue) {
   const container = document.getElementById(containerId);
   let selected = defaultValue;
@@ -151,7 +256,8 @@ async function subirFotosPendientes() {
   for (const card of cards) {
     if (card._fotoFile && !card._fotoUrl) {
       const formData = new FormData();
-      formData.append("foto", card._fotoFile);
+      const nombreArchivo = card._fotoFile.name || card._fotoFileName || "foto.jpg";
+      formData.append("foto", card._fotoFile, nombreArchivo);
       const res = await fetch(`${API}/api/upload-foto`, { method: "POST", body: formData });
       const data = await res.json();
       if (data.ok) card._fotoUrl = data.foto_url;
@@ -165,6 +271,7 @@ function leerPersonajes() {
       nombre: card.querySelector(".c-nombre").value.trim(),
       tipo: card.querySelector(".c-tipo").value,
       descripcion: card.querySelector(".c-desc").value.trim(),
+      voz: card.querySelector(".c-voz").value,
       tiene_foto_referencia: !!card._fotoUrl,
       foto_referencia_url: card._fotoUrl || null,
     }))
@@ -295,7 +402,7 @@ btnGenerar.addEventListener("click", async () => {
   btnGenerar.disabled = true;
   btnReintentar.hidden = true;
   try {
-    statusEl.textContent = "Subiendo fotos de referencia...";
+    statusEl.textContent = "Subiendo fotos y dibujos de referencia...";
     await subirFotosPendientes();
 
     statusEl.textContent = "Escribiendo el guion del capítulo con IA...";
@@ -314,10 +421,11 @@ btnGenerar.addEventListener("click", async () => {
     detalleGuionEl.hidden = false;
 
     statusEl.textContent = "Arrancando la generación de imágenes y voces...";
+    const personajesActualizados = leerPersonajes(); // por si subieron fotos entre medio
     const resRender = await fetch(`${API}/api/render`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ episodio, personajes }),
+      body: JSON.stringify({ episodio, personajes: personajesActualizados, voz_narracion: chipsVozNarracion.value }),
     });
     const dataRender = await resRender.json();
     if (!dataRender.ok) throw new Error(dataRender.error);
@@ -357,4 +465,32 @@ async function cargarEpisodios() {
   }
 }
 
-cargarEpisodios();
+// --- Arranque: primero traemos el catálogo de voces (para los selectores
+// de cada personaje y el chip de narración), recién ahí armamos los
+// personajes de ejemplo y el resto de la página. ---
+async function initVoces() {
+  try {
+    const res = await fetch(`${API}/api/voces`);
+    const data = await res.json();
+    if (data.ok && data.voces && data.voces.length) VOCES = data.voces;
+  } catch {
+    // Si falla, vozOptionsHtml ya tiene un fallback razonable ("calido").
+  }
+  chipsVozNarracion = buildChipGroup(
+    "chipsVozNarracion",
+    (VOCES.length ? VOCES : [{ id: "calido", label: "Cálida (recomendada)" }]).map((v) => ({ label: v.label, value: v.id })),
+    "calido"
+  );
+}
+
+async function init() {
+  await initVoces();
+
+  // Dos personajes de ejemplo para arrancar
+  addCharCard({ nombre: "Toby", tipo: "mascota_real", descripcion: "Perro marrón mediano, orejas caídas, collar rojo. Cariñoso y curioso (basado en foto real de la familia).", voz: "hombre_joven" });
+  addCharCard({ nombre: "Estrellita", tipo: "inventado", descripcion: "Hada pequeña de luz dorada, alas transparentes. Valiente y buena onda.", voz: "mujer_joven" });
+
+  cargarEpisodios();
+}
+
+init();
